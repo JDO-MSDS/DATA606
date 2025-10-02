@@ -1,0 +1,101 @@
+---
+title: "Data 606 Lab 4"
+author: "Joao De Oliveira"
+date: "r Sys.Date()"
+output: pdf_document
+---
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(openintro)
+library(ggplot2)
+```
+
+```{r data}
+data("fastfood", package = "openintro")
+head(fastfood)
+```
+### Exercise 1
+Make a plot (or plots) to visualize the distributions of the amount of calories from fat of the options from these two restaurants. How do their centers, shapes, and spreads compare?
+
+```{r exercise1}
+mcdonalds <- fastfood %>%
+  filter(restaurant == "Mcdonalds")
+dairy_queen <- fastfood %>%
+  filter(restaurant == "Dairy Queen")
+
+ggplot(data = mcdonalds, aes(x = cal_fat)) +
+  geom_histogram(binwidth = 50, alpha = 0.5) +
+  labs(title = "Distribution of calories from fat in McDonalds products", x = "Calories from fat", y = "count") + 
+  theme_minimal()
+
+ggplot(data = dairy_queen, aes(x = cal_fat)) +
+  geom_histogram(binwidth = 50, alpha = 0.5) +
+  labs(title = "Distribution of calories from fat in Dairy Queen products", x = "Calories from fat", y = "count") +
+  theme_minimal()
+```
+
+### Answer 1
+Analyzing McDonalds and Dairy Queen's graphs, we can see that McDonalds' distribution is more spread with some products with more than 750 calories (there is one, which is an outlier, with around 1250 calories) while Dairy Queen's distribution is more narrow, so items are have a more consistent fat distribution. Both distributions are right skewed, since the right tail is much longer, suggesting that both have more low calories products. The center of McDonalds is higher (shifted to the right) when compared with Dairy Queen's center.
+
+
+### Exercise 2
+Based on the this plot, does it appear that the data follow a nearly normal distribution?
+
+```{r exercise2}
+dqmean <- mean(dairy_queen$cal_fat, na.rm = TRUE)
+dqsd <- sd(dairy_queen$cal_fat, na.rm = TRUE)
+
+ggplot(data = dairy_queen, aes(x = cal_fat)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 50) +
+  stat_function(fun = dnorm, args = list(mean = dqmean, sd = dqsd), col = "tomato")
+```
+
+### Answer 2
+Looking at this plot the distribution doesn't seem to follow a normal distribution since the graph is not bell shaped, it's pretty irregular due to gaps between columns (low density products with calories from fat between 325 and 425 or none between 525 and 575), and it's not symmetrical. Also, the data is pretty spread to the right side when compared with the left side, reinforcing the idea that this is not a normal distribution.
+
+
+### Exercise 3
+Make a normal probability plot of sim_norm. Do all of the points fall on the line? How does this plot compare to the probability plot for the real data? (Since sim_norm is not a data frame, it can be put directly into the sample argument and the data argument can be dropped.)
+
+```{r exercise3}
+ggplot(data = dairy_queen, aes(sample = cal_fat)) +
+  geom_line(stat = "qq")
+
+sim_norm <- rnorm(n = nrow(dairy_queen), mean = dqmean, sd = dqsd)
+
+ggplot(data = NULL, aes(sample = sim_norm)) + 
+  geom_line(stat = "qq")
+```
+
+### Answer 3
+When analyzing the sim_norm probability plot we can see that the points do not all fall on the imaginary digonal (y =x) line. However, we can see that this plot is much closer to  a y=x line than the plot with the real data. In the real data plot points tend to have much more deviation from the y=x line. At the same time, in both plots when we get to the top of the plot (products with higher calorie content) the deviation increases.
+
+### Exercise 4
+Does the normal probability plot for the calories from fat look similar to the plots created for the simulated data? That is, do the plots provide evidence that the calories are nearly normal?
+
+```{r exercise4}
+qqnormsim(sample = cal_fat, data = dairy_queen)
+```
+
+### Answer 4
+Looking at these 9 plots I conclude that despite they are not equal to the previous simulated plot, they all emphasize the top right corner issue where the distribution becomes more inconsistent. Also, some of them show similar behavior for the bottom left corner portion.
+
+### Exercise 5
+Using the same technique, determine whether or not the calories from McDonald’s menu appear to come from a normal distribution.
+
+```{r exercise5}
+ggplot(data = dairy_queen, aes(sample = cal_fat)) +
+  geom_line(stat = "qq")
+
+sim_norm <- rnorm(n = nrow(dairy_queen), mean = dqmean, sd = dqsd)
+
+ggplot(data = NULL, aes(sample = sim_norm)) + 
+  geom_line(stat = "qq")
+
+qqnormsim(sample = cal_fat, data = dairy_queen)
+```
+
+
+
+
