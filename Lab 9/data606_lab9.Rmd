@@ -1,0 +1,255 @@
+---
+title: "DATA 606 Lab 9 Multiple linear regression"
+author: "João De Oliveira"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(eval = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(openintro)
+library(GGally)
+```
+
+
+```{r exercise 1}
+glimpse(evals)
+
+?evals
+```
+
+### Exercise 1
+Is this an observational study or an experiment? The original research question 
+posed in the paper is whether beauty leads directly to the differences in course
+evaluations. Given the study design, is it possible to answer this question as 
+it is phrased? If not, rephrase the question.
+
+### Answer 1
+This is an observational study. Professors weren't randomly assigned to different
+groups based on their "beauty", which would be a requirement for an experiment.
+I don't think the question is correctly phrased since we can't check causality
+without addressing other variables besides beauty. Also, the fact that beauty
+and course evaluation are correlated doesn't mean one causes the other. I would
+phrase the question like "After controlling other factors, can we say that there
+is an association between professors' beauty and their evaluation scores?"
+
+
+### Exercise 2
+Describe the distribution of score. Is the distribution skewed? What does that 
+tell you about how students rate courses? Is this what you expected to see? 
+Why, or why not?
+
+```{r exercise2}
+ggplot(evals, aes(x = score)) +
+  geom_histogram(binwidth = 0.2, color='white') +
+  labs(title = "Distribution of Course Evaluation Scores",
+       x = "Score",
+       y = "Count")
+```
+
+### Answer 2
+The distribution of scores is left skewed, which means that most of the data
+is concentrated on the right side (long tail to the left). This means that most
+students graded professors/courses with high scores, which didn't really 
+surprised me. I think most students tend to give high scores in courses evaluation
+unless they have something personal against the professor.
+
+
+### Exercise 3
+Excluding score, select two other variables and describe their relationship with
+each other using an appropriate visualization.
+
+```{r exercise3}
+ggplot(evals, aes(x = gender, y = bty_avg)) +
+  geom_boxplot() +
+  labs(title = "Relationship Between Gender and Average Beauty Rating",
+       x = "Gender",
+       y = "Average Beauty Rating")
+```
+
+
+### Answer 3
+I decided to check whether there is a relationship between gender and average
+beauty rating. As we can see in the boxplot, the distribution of female professors' 
+beauty score has higher 1st and 3rd quartiles and median than male professors' 
+distribution. The highest scores are also for female professors. So, there is
+a relationship between gender and average scores.
+
+
+```{r simple-lr}
+ggplot(data = evals, aes(x = bty_avg, y = score)) +
+  geom_point()
+```
+
+
+### Exercise 4
+Replot the scatterplot, but this time use geom_jitter as your layer. What was 
+misleading about the initial scatterplot?
+
+```{r exercise4}
+ggplot(data = evals, aes(x = bty_avg, y = score)) +
+geom_jitter()
+```
+
+### Answer 4
+The initial scatterplot was misleading because it looked like there were fewer 
+data points than reality. With geom_jitter points are not overlapping, so we can
+actually see all the observations.
+
+
+### Exercise 5
+Let’s see if the apparent trend in the plot is something more than natural variation. 
+Fit a linear model called m_bty to predict average professor score by average 
+beauty rating. Write out the equation for the linear model and interpret the slope. 
+Is average beauty score a statistically significant predictor? Does it appear to 
+be a practically significant predictor?
+
+
+```{r exercise5}
+m_bty <- lm(score ~ bty_avg, data = evals)
+summary(m_bty)
+```
+
+### Answer 5
+equation: score_hat = 3.88034 + 0.06664 x bty_avg
+
+Since the slope is 0.0664, the model predicts that for each point increase in 
+average beauty rating, the score increases 0.0664. Average beauty rating is a 
+statistically significant predictor because the p-value for bty_avg is 5.083e-05, 
+which is much smaller than 0.05 (common significance level). Since the increase
+in score per point increase in average beauty rating is pretty small (0.0664), then
+despite bty_avg being statistically significant, it is not practically significant.
+The impact is small.
+
+
+### Exercise 6
+Use residual plots to evaluate whether the conditions of least squares regression are reasonable. Provide plots and comments for each one (see the Simple Regression Lab for a reminder of how to make these).
+
+```{r exercise6}
+ggplot(data = evals, aes(x = bty_avg, y = score)) +
+  geom_jitter() +
+  geom_smooth(method = "lm")
+
+ggplot(data = evals, aes(x = bty_avg, y = score)) +
+  geom_jitter() +
+  geom_smooth(method = "lm", se = FALSE)
+
+# residuals and fitted vals
+evals <- evals %>%
+  mutate(
+  bty_fit = fitted(m_bty),
+  bty_res = resid(m_bty)
+  )
+
+ggplot(evals, aes(x = bty_fit, y = bty_res)) +
+  geom_hline(yintercept = 0) +
+  geom_point() +
+  labs(
+    title = "Residuals vs Fitted - score and bty_avg",
+    x = "Fitted Values",
+    y = "Residuals"
+  )
+
+# normal Q-Q plot
+ggplot(evals, aes(sample = bty_res)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Residuals - score and bty_avg")
+```
+
+### Answer 6
+**Linear** The residuals appear somewhat randomly scattered around the y=0 
+horizontal line, which suggests that is reasonable to assume a linear relationship.
+**Q-Q plot** we can see that most points fall on the straight line,
+however, there are deviations on the tails (mainly upper right) indicating that 
+the residuals are not perfectly normal, but not enough to dismiss the model.
+**Constant variance** The spread of residuals seems roughly constant across the 
+range of fitted values, which supports the constant-variance assumption.
+**Independence** Since some professors appear multiple times, that can be an 
+issue regarding independence. At the same time, the scores are from various courses.
+
+
+```{r bty-rel}
+ggplot(data = evals, aes(x = bty_f1lower, y = bty_avg)) +
+  geom_point()
+
+evals %>% 
+  summarise(cor(bty_avg, bty_f1lower))
+```
+
+
+```{r bty-rels}
+evals %>%
+  select(contains("bty")) %>%
+  ggpairs()
+```
+
+
+```{r scatter-score-bty_avg_pic-color}
+m_bty_gen <- lm(score ~ bty_avg + gender, data = evals)
+summary(m_bty_gen)
+```
+
+
+### Exercise 7
+P-values and parameter estimates should only be trusted if the conditions for the
+regression are reasonable. Verify that the conditions for this model are 
+reasonable using diagnostic plots.
+
+
+```{r exercise7}
+evals <- evals %>%
+mutate(
+bty_gen_fit = fitted(m_bty_gen),
+bty_gen_res = resid(m_bty_gen)
+)
+
+# residuals and fitted vals
+
+ggplot(evals, aes(x = bty_gen_fit, y = bty_gen_res)) +
+geom_hline(yintercept = 0, linetype = "dashed") +
+geom_point(alpha = 0.6) +
+labs(
+title = "Residuals vs Fitted score - bty_avg + gender",
+x = "Fitted values",
+y = "Residuals"
+)
+
+# normal Q-Q plot
+
+ggplot(evals, aes(sample = bty_gen_res)) +
+stat_qq() +
+stat_qq_line() +
+labs(
+title = "Normal Q-Q Plot - score ~ bty_avg + gender"
+)
+```
+
+
+### Answer 7
+**Linear** The residuals appear somewhat randomly scattered around the y=0 
+horizontal line, which suggests that is reasonable to assume a linear relationship.
+**Q-Q plot** SQ–Q plot shows approximate normality with mild tail deviations.
+**Constant variance** The spread of residuals seems roughly constant across the 
+range of fitted values, which supports the constant-variance assumption.
+**Independence** Since some professors appear multiple times, that can be an issue 
+regarding independence. At the same time, the scores are from various courses.
+
+So, the conditions for this multiple linear regression appear reasonably satisfied.
+
+
+### Exercise 8
+Is `bty_avg` still a significant predictor of `score`? Has the additionof `gender`
+to the model changed the parameter estimate for `bty_avg`?
+
+### Answer 8
+Yes. From the output:
+
+The p-value for bty_avg is very small (on the order of 10^-6), so bty_avg is still a statistically significant predictor of score even after controlling for gender.
+
+The estimate for bty_avg changes only slightly compared to the simple model, meaning the relationship between beauty and score is not fully explained by gender.
