@@ -1,0 +1,400 @@
+---
+title: "DATA 606 Final Project"
+author: "Joao De Oliveira"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(readr)
+library(broom)
+library(gt)
+library(pROC)
+```
+
+
+### Abstract
+
+This project investigates whether ball possession is associated with a team’s probability of winning in professional soccer. Using a large dataset of 96,337 matches across multiple leagues and seasons, we transform the match-level data into team–match observations (two rows per match: one for the home team and one for the away team). For each team, we define a binary response variable indicating whether the team won (Win) or did not win (Not-Win: draw or loss). The main explanatory variable is the team’s ball possession percentage, with additional variables such as shots on goal and home–away status available for extended models.
+
+We begin by cleaning and restructuring the data, then provide descriptive summaries and visualizations comparing possession distributions for wins versus non-wins. To formally test for an association between possession and outcomes, we first perform a chi-square test using binned possession categories and Win/Not-Win as a contingency table. We then fit logistic regression models in which the probability of a win is modeled as a function of possession, with optional adjustments for home advantage and shots on goal.
+
+Because the data are observational, we do not make causal claims. Instead, we interpret the results as evidence of association and discuss possible confounders such as team strength and game state. Overall, the analysis is expected to show that higher possession is associated with a higher probability of winning, though the effect may be moderated by chance creation and defending quality. Limitations and directions for future work, including the use of expected goals and team fixed effects, are also discussed.
+
+### Part 1 - Introduction
+**Research question**
+Does greater ball possession significantly increase a team’s probability of winning (vs not winning = draw or loss) in professional soccer?
+
+**Motivation**
+Coaches, analysts, and fans often talk about “dominating possession” as a sign of control. However, it is not obvious whether high possession directly translates into better results, or whether it is simply a byproduct of other factors (team strength, game strategy tactical choices).
+
+**Goal of this analysis**
+Use a large multi-league dataset to:
+- Describe how possession differs between matches that teams win vs do not win.
+- Test whether possession is associated with Win vs Not-Win.
+Quantify this relationship using logistic regression.
+
+**Scope of inference**
+This is an observational study using historical match data. We can speak about association, not causation.
+
+
+### Part 2 - Data
+
+
+#### Loading Raw Data
+
+```{r data}
+matches_raw <- read_csv("full_data.csv", show_col_types = FALSE)
+
+# quick overview
+dim(matches_raw)
+head(matches_raw)
+names(matches_raw)
+```
+
+
+#### Team-match Level Data
+
+```{r match-level-data}
+# helper to parse "53%" or "53" into numeric 53
+parse_poss <- function(x) {
+x <- gsub("%", "", x)
+suppressWarnings(as.numeric(x))
+}
+
+# home team rows
+home_rows <- matches_raw %>%
+transmute(
+League,
+Date,
+Time,
+team      = Home,
+opponent  = Away,
+team_goals = H_Score,
+opp_goals  = A_Score,
+team_poss  = parse_poss(H_Ball_Possession),
+opp_poss   = parse_poss(A_Ball_Possession),
+team_sog   = H_Shots_on_Goal,
+opp_sog    = A_Shots_on_Goal,
+is_home    = 1L
+)
+
+# away team rows
+away_rows <- matches_raw %>%
+transmute(
+League,
+Date,
+Time,
+team      = Away,
+opponent  = Home,
+team_goals = A_Score,
+opp_goals  = H_Score,
+team_poss  = parse_poss(A_Ball_Possession),
+opp_poss   = parse_poss(H_Ball_Possession),
+team_sog   = A_Shots_on_Goal,
+opp_sog    = H_Shots_on_Goal,
+is_home    = 0L
+)
+
+teams_df <- bind_rows(home_rows, away_rows) %>%
+mutate(
+team_win_bin = case_when(
+team_goals > opp_goals ~ 1L,
+team_goals <= opp_goals ~ 0L,   
+TRUE ~ NA_integer_
+)
+)
+
+glimpse(teams_df)
+
+# remove rows with missing possession data
+main_df <- teams_df %>%
+filter(!is.na(team_win_bin),
+!is.na(team_poss))
+
+nrow(main_df)
+```
+
+
+**Cases** Each case is a single team’s performance in a match.
+**Number of cases used in the main analysis** 103738
+
+
+#### Variables
+
+**Response / Dependent variable**
+team_win_bin: 1 = team won the match, 0 = team drew or lost.
+Type: Categorical (binary)
+
+**Main explanatory variable**
+team_poss: team’s ball possession (%)
+Type: Quantitative (numeric)
+
+**Additional explanatory variables**
+is_home: 1 = home team, 0 = away team (categorical/binary)
+team_sog: shots on goal (numeric)
+opp_sog: opponent’s shots on goal (numeric)
+League, Date
+
+
+### Part 3 - Exploratory data analysis
+
+
+#### Distribution of possession
+
+```{r possession-dist}
+main_df %>%
+ggplot(aes(x = team_poss)) +
+geom_histogram(bins = 40, color = "white") +
+labs(
+title = "Distribution of Team Possession (%)",
+x = "Possession (%)",
+y = "Number of team–matches"
+)
+```
+
+
+#### Possession by outcome (Win vs Not-Win)
+
+```{r possession-result}
+main_df %>%
+mutate(outcome = ifelse(team_win_bin == 1, "Win", "Not-Win")) %>%
+ggplot(aes(x = outcome, y = team_poss, fill = outcome)) +
+geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+labs(
+title = "Team Possession by Outcome",
+x = "",
+y = "Possession (%)"
+) +
+theme_minimal()
+```
+
+
+### Part 4 - Summary Statistics
+
+```{r statistics}
+# overall possession
+summary(main_df$team_poss)
+
+# outcome counts
+table(main_df$team_win_bin)
+
+# possession by outcome
+summ_by_outcome <- main_df %>%
+group_by(team_win_bin) %>%
+summarise(
+n = n(),
+mean_poss = mean(team_poss, na.rm = TRUE),
+sd_poss = sd(team_poss, na.rm = TRUE)
+) %>%
+mutate(
+outcome = ifelse(team_win_bin == 1, "Win", "Not-Win")
+) %>%
+select(outcome, n, mean_poss, sd_poss)
+
+summ_by_outcome %>% gt()
+```
+
+
+### Part 5 - Inference
+
+
+#### Hypotheses & Methods
+
+We test whether possession is associated with Win vs Not-Win using:
+
+- **Chi-square test of independence** between binned possession and outcome.
+
+- **Logistic regression** modeling the probability of winning as a function of possession.
+
+*Null hypothesis (H₀):*
+Possession is not associated with Win vs Not-Win (no difference in distribution across outcomes).
+
+*Alternative hypothesis (Hₐ):*
+Possession is associated with Win vs Not-Win.
+
+```{r chi-square}
+# chi-square test (binned possession)
+chi_df <- main_df %>%
+mutate(
+poss_bin = cut(
+team_poss,
+breaks = c(-Inf, 40, 50, 60, Inf),
+labels = c("<40%", "40–50%", "50–60%", ">60%")
+),
+outcome = factor(ifelse(team_win_bin == 1, "Win", "Not-Win"))
+)
+
+tab <- table(chi_df$poss_bin, chi_df$outcome)
+tab
+```
+
+```{r chi2}
+if (all(rowSums(tab) > 0) && all(colSums(tab) > 0)) {
+chi_res <- chisq.test(tab, correct = FALSE)
+chi_res
+} else {
+message("Chi-square skipped: empty row or column in contingency table.")
+}
+```
+
+To test whether possession level is associated with match outcome (Win vs Not-Win), I conducted a chi-square test of independence using a contingency table of binned possession categories and outcomes. The test produced a chi-square statistic of 113.92 with 3 degrees of freedom and a p-value of 2.2e-16. At the 0.05 significance level, since the p-value is much less than 0.05, I reject the null hypothesis. This suggests that there is evidence of an association between possession category and whether a team wins or does not win.
+
+
+#### Logistic regression
+
+**Model 1: Possession**
+
+```{r model1}
+logit_df <- main_df %>%
+mutate(
+team_win_bin = as.integer(team_win_bin)
+)
+
+m1 <- glm(team_win_bin ~ scale(team_poss),
+data = logit_df,
+family = binomial())
+
+summary(m1)
+
+m1_or <- broom::tidy(m1, exponentiate = TRUE, conf.int = TRUE)
+m1_or %>% gt()
+```
+
+
+**Model 2: Possession + home advantage + shots on goal**
+
+```{r model2}
+# Some matches may have NA shots on goal; drop those rows for this model
+logit_df2 <- logit_df %>%
+filter(!is.na(team_sog), !is.na(opp_sog))
+
+m2 <- glm(team_win_bin ~ scale(team_poss) + is_home + scale(team_sog) + scale(opp_sog),
+data = logit_df2,
+family = binomial())
+
+summary(m2)
+
+m2_or <- broom::tidy(m2, exponentiate = TRUE, conf.int = TRUE)
+m2_or %>% gt()
+```
+
+
+**ROC / AUC for Model 1**
+
+```{r roc-auc}
+roc1 <- pROC::roc(logit_df$team_win_bin, fitted(m1))
+pROC::auc(roc1)
+```
+
+
+### Part 6 - Results
+
+**Chi-Square test**
+To assess whether possession level is associated with match outcome (Win vs Not-Win),
+I conducted a chi-square test of independence using binned possession categories.
+The test produced a chi-square statistic of X² = 113.92 with df = 3 and a 
+p-value < 2.2e-16. Since the p-value is far below the 0.05 significance threshold,
+I reject the null hypothesis. This provides strong statistical evidence of an 
+association between ball possession category and whether a team wins or does not
+win.
+
+The distribution of win outcomes varies across possession categories, suggesting
+that teams with higher possession tend to have higher win rates, while those with
+lower possession tend to win less frequently.
+
+
+**Logistic Regression - Model 1(Possession)**
+The first logistic regression model examined whether ball possession percentage
+predicts the probability of winning, without adjusting for any other factors. 
+Possession was standardized (z-scored) for easier interpretation.
+The coefficient for scale(team_poss) was 0.0813 (SE = 0.00646, z = 12.6, p < 2e-16),
+indicating a statistically significant positive relationship between possession 
+and win probability.
+The odds ratio for scaled possession was 1.0847, meaning that a one-standard-deviation
+increase in possession is associated with an 8.5% increase in the odds of winning.
+Although statistically significant, the model’s classification performance was poor,
+with an AUC of 0.5201, only slightly above random guessing (0.5).
+This means that while possession is statistically associated with wins, it is not
+very predictive on its own.
+
+
+**Logistic Regression - Model 2 (Possession + Home Advantage + Shots on Goal)**
+In this model I decided to add additional predictors: **home advantage**, 
+**Team shots on goal**, and **Opponent shots on goal**. The results are quite 
+different since the coefficient for possession is now negative (-0.331910 with
+p < 2e-16), which means that after accounting for shot creation and the advantage
+of play at home, higher ball possession is no longer positively related to winning.
+Team shots on goal had a strong positive effect (0.923630, p < 2e-16).Opponent 
+shots on goal had a strong negative effect (–0.784334, p < 2e-16). Home teams 
+were more likely to win (0.3004, p < 2e-16).
+The model fit improved substantially: AIC dropped from 136,241 (Model 1) to 
+111,947, showing that adding these predictors greatly increases explanatory power.
+
+
+### Part 7 - Discussion
+
+The results show that while possession appears to be associated with winning when
+analyzed in isolation, this relationship weakens and even changes once more 
+meaningful performance variables (home advantage, shots on goal) are included. 
+The chi-square test and simple logistic regression both suggest that teams with 
+higher possession tend to win more often. However, possession by itself has 
+limited predictive value, as demonstrated by the low AUC of 0.5201 in Model 1. 
+Remember that a 0.521 AUC (area under curve) is very close to simply guessing.
+
+Model 2 reveals a more nuanced reality: once we account for shot creation, shot 
+prevention, and home advantage, possession becomes negatively associated with the
+probability of winning. This was surprising to me. This reversal indicates that 
+possession does not directly drive match outcomes; instead, it may reflect a 
+team’s tactical style, game state (early goals for example), or opponent behavior.
+For example, strong counterattacking teams often offer possession to their opponent
+but still create high-quality chances, while weaker teams may dominate possession
+late in matches when trailing, inflating their possession numbers.
+
+The strong effects of shots on goal (positive for the team, negative for the 
+opponent) suggest that chance creation and defensive solidity are far more direct
+contributors to winning. The significant positive coefficient for home advantage
+aligns with long-established findings in football analytics.
+
+Overall, the findings support that in soccer analytics possession is a descriptive
+measure of style, not necessarily a reliable predictor of success. Teams can win
+with high possession or low possession, depending on tactical approach, shot 
+efficiency, and defensive performance.
+
+
+### Part 8 - Limitations
+
+- Observational data: many unobserved confounders (team strength, tactics, injuries).
+- Possession may be affected by game state (teams leading may concede more possession).
+- Missing or noisy stats for some matches.
+- Single binary outcome (win vs not) doesn’t capture margin of victory.
+
+
+### Part 9 - Conclusion
+
+This analysis examined whether ball possession increases a team’s chances of 
+winning across nearly 100,000 professional matches. Possession alone showed a 
+statistically significant association with winning, but it had weak predictive 
+power. When I included more direct performance measures such as shots on goal, 
+opponent shots, and home advantage, the effect of possession not only weakened 
+but reversed. This indicates that the initial relationship was driven by confounding
+factors rather than possession itself.
+
+Overall, the results suggest that possession is not a reliable predictor of winning.
+Instead, match outcomes are far more strongly influenced by chance creation and 
+avoidance and home advantage. Possession should be viewed more as a tactical style 
+than a meaningful measure of match success.
+
+
+### References
+
+https://www.kaggle.com/datasets/bastekforever/complete-football-data-89000-matches-18-leagues/data 
